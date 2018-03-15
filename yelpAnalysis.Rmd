@@ -1,0 +1,30 @@
+---
+title: "Yelp Dataset Analysis"
+output: html_notebook
+---
+
+## Import Libraries
+```{r}
+library("jsonlite")
+library("ggplot2")
+library("readr")
+```
+
+
+## Import the dataset
+```{r}
+business_json_df <- stream_in(file("~/Documents/Project/YelpAnalysis/dataset/business.json"))
+business_df <- flatten(business_json_df)
+
+review_json_df <- stream_in(file("~/Documents/Project/YelpAnalysis/dataset/review.json"))
+review_df <- flatten(review_json_df)
+
+user_json_df <- stream_in(file("~/Documents/Project/YelpAnalysis/dataset/user.json"))
+user_df <- flatten(user_json_df)
+```
+
+## 
+```{r}
+
+```
+
