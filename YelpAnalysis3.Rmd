@@ -1,0 +1,130 @@
+---
+title: "Yelp Dataset Analysis - part3"
+output: html_notebook
+---
+
+### Import Libraries
+```{r}
+library("jsonlite")
+library("ggplot2")
+library("readr")
+setwd("~/Documents/Project/YelpAnalysis/")
+```
+
+### Import Business Dataset
+```{r}
+business <- stream_in(file( "dataset/business_open_Toronto.json"))
+business.df <- flatten(business)
+business.df
+```
+
+#### remove null neighborhood rows
+```{r}
+business.df <- business.df[!(is.na(business.df$neighborhood) | business.df$neighborhood==""), ]
+business.df
+```
+
+### Investigate Neighbourhood rating with gibbs sampling and hierachical model
+
+#### Encode all the caterogries
+```{r}
+# one-hot-encode all the categories
+library(qdapTools)
+categories <- mtabulate(business.df$categories)
+categories
+```
+
+#### create a count dataframe to count the frequency of each unique category and then sum them, Keep the categories with the  top 15 frequency
+```{r}
+# create a count dataframe to count the frequency of each unique category and then sum them
+categories.sum <- data.frame(
+                 category=character(),
+                 counts=integer(),
+                 stringsAsFactors=FALSE)
+
+for (name in names(categories)) {
+  categories.sum[nrow(categories.sum) + 1,] = list(name, sum(categories[name]))
+}
+categories.sum
+
+# Keep the top 15 categories
+eliminated.categories <- categories.sum[order(categories.sum$counts, decreasing = TRUE),]
+eliminated.categories <- eliminated.categories[1:16,]
+eliminated.categories
+
+# remove all the column that is not the top 15 category
+library(dplyr)
+categories.filtered <- categories[eliminated.categories$category]
+categories.filtered
+```
+
+#### merge the categories back to business dataframe, Only keep the target column, the explanatory columns(categories column) and business id and name
+```{r}
+categories.filtered$ID <- seq.int(nrow(categories.filtered))
+business.df$ID <- seq.int(nrow(business.df))
+encoded.business.df <- left_join(business.df[,c("ID", "neighborhood")], categories.filtered)
+encoded.business.df
+```
+
+#### Remove unnecessary column (id) and label the neighborhood data
+```{r}
+# drop unneeded columns
+drops <- c("ID", "Restaurants")
+encoded.business.df <- encoded.business.df[ , !(names(encoded.business.df) %in% drops)]
+encoded.business.df
+
+# # label neighborhood
+# encoded.business.df$neighborhood <- factor(encoded.business.df$neighborhood)
+# encoded.business.df$neighborhood <- as.numeric(encoded.business.df$neighborhood)
+# encoded.business.df
+```
+
+```{r}
+
+ClusterNum <- list()
+BIC <- list()
+
+for(i in 1:10) {
+  fit <- blca.em(encoded.business.df[, -1], i)
+  ClusterNum[i-1] <- i
+  BIC[i-1] <- fit$BIC
+}
+t_in <- do.call(rbind, Map(data.frame, ClusterNum=ClusterNum, BIC=BIC))
+```
+
+#### Apply Mixture Model to Cluster the dataset
+```{r}
+library(BayesLCA)
+
+ClusterNum2 <- list()
+BIC2 <- list()
+
+for(i in 1:7) {
+  fit <- blca.em(encoded.business.df[, -1], i*10)
+  ClusterNum2[i-1] <- i*10
+  BIC2[i-1] <- fit$BIC
+  print(fit)
+}
+
+ten_val <- do.call(rbind, Map(data.frame, ClusterNum=ClusterNum2, BIC=BIC2))
+ten_val
+```
+
+```{r}
+fit2 <- blca.em(encoded.business.df[, -1], 7)
+print(fit2)
+
+par(mfrow = c(2,2))
+plot(table(MAP(Zscore(encoded.business.df[, -1], fit2)), encoded.business.df$neighborhood), main = 'groups against neighborhoods', las = 1)
+dt <- table(encoded.business.df$neighborhood, MAP(Zscore(encoded.business.df[, -1], fit2)))
+dt
+neighborhood_group <- as.data.frame.matrix(dt) 
+neighborhood_group.df <- subset(neighborhood_group, select=c("Scarborough", "Downtown Core"))
+plot(fit2, which = 1)
+dt
+heatmap(dt, Rowv=NA, Colv=NA, col = cm.colors(256), scale="column", margins=c(1,1))
+
+for (row in rownames(dt)) { dt[row, ] <- dt[row, ] / sum(dt[row, ]) }
+dt
+```
+

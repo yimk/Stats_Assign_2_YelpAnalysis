@@ -11,26 +11,75 @@ library("readr")
 setwd("~/Documents/Project/YelpAnalysis/")
 ```
 
-### Import Business Dataset
+### Import Business Dataset and Review Dataset
 ```{r}
-business <- "dataset/business.json"
-review <-read_lines(business, n_max = 200000)
-business.df <- fromJSON(paste("[", paste(review, collapse = ","), "]"))
+# Import business dataset
+business <- stream_in(file( "dataset/business.json"))
+business.df <- flatten(business)
 business.df
+
+# Import review dataset
+review <- stream_in(file("dataset/review_Toronto.json"))
+review.df <- flatten(review)
+review.df
+
+# only keep stars, businees id and user id in the review dataset
+review.df <- review.df[ ,c("business_id", "user_id", "stars")]
+```
+
+#### merge review dataset with the corresponding neighborhood
+```{r}
+review.df$neighborhood <- business.df$neighborhood [match(review.df$business_id, business.df$business_id)]
+review.df
+
+```
+
+#### Drop null or empty rows, since we know all the columns are essential
+```{r}
+# drop null or empty neighborhood
+review.df <- review.df[!(is.na(review.df) | review.df==""), ]
+review.df
 ```
 
 ### Investigate Neighbourhood rating with gibbs sampling and hierachical model
+
+#### Remove negihbourhood with only one restarant
+```{r}
+review.df <- review.df[review.df$neighborhood %in% names(table(review.df$neighborhood))[table(review.df$neighborhood) >= 1],]
+review.df
+```
+
+#### factor the neighborhood vector
+```{r}
+review.df$neighborhood <- factor(review.df$neighborhood)
+nlevels(review.df$neighborhood)
+review.df$neighborhood
+```
+
+#### Visualize neighborhood against rate
+```{r}
+ggplot(review.df) + geom_boxplot(aes(x = reorder(neighborhood, stars, mean), stars, fill = reorder(neighborhood, stars, mean)), show.legend=FALSE) + theme(axis.text.x = element_text(angle = 90, hjust = 1))
+```
+
+#### Visualize number of samples for each neighborhood
+```{r}
+ggplot(review.df, aes(x = reorder(neighborhood, neighborhood, length))) + stat_count() + theme(axis.text.x = element_text(angle = 90, hjust = 1))
+```
+
+#### Visualize counting of each rating
+```{r}
+ggplot(review.df, aes(stars)) + stat_bin()
+```
 
 #### method
 ```{r}
 compare_m_gibbs <- function(y, ind, maxiter = 5000)
 {
-    
+  
   ### weakly informative priors
-  a0 <- 1/2 ; b0 <- 50 ## tau_w hyperparameters, gamma
-  eta0 <-1/2 ; t0 <- 50 ## tau_b hyperparameters, gamma
-  mu0<-50 ## mean, norm
-  gamma0 <- 1/25 
+  a0 <- 1/2 ; b0 <- 50 ## tau_w hyperparameters
+  eta0 <-1/2 ; t0 <- 50 ## tau_b hyperparameters
+  mu0<-3 ; gamma0 <- 1/25
   ###
   
   ### starting values
@@ -51,6 +100,8 @@ compare_m_gibbs <- function(y, ind, maxiter = 5000)
   ### MCMC algorithm
   for(s in 1:maxiter) 
   {
+    
+    cat(paste(s, " ")); flush.console()
     # sample new values of the thetas
     for(j in 1:m) 
     {
@@ -86,92 +137,49 @@ compare_m_gibbs <- function(y, ind, maxiter = 5000)
 }
 ```
 
-### 
+### fit the model with gibbs sampling and hierachical model
 ```{r}
-business_df$neighborhood <- factor(business_df$neighborhood)
-fit <- compare_m_gibbs(business_df$stars, business_df$neighborhood)
+fit <- compare_m_gibbs(review.df$stars, review.df$neighborhood)
 ```
 
+#### Visualize neighborhood against rate but this time we use the simulation result from gibbs sampling
 ```{r}
-apply(fit$params, 2, mean)
+# modify fit$theta list into dataframe
+library(MCMCpack)
+plot(as.mcmc(fit$theta))
+
+stars <- c()
+neighborhood <- c()
+theta <- fit$theta
+theta
+index <- 1
+
+
+colnames(theta) <- unique(review.df$neighborhood)
+sim.df <- as.data.frame(as.table(theta))
+sim.df
+
+i <- sapply(sim.df, is.factor)
+sim.df[i] <- lapply(sim.df[i], as.character)
+
+colnames(sim.df)[colnames(sim.df) == 'Var2'] <- 'neihgborhood'
+colnames(sim.df)[colnames(sim.df) == 'Freq'] <- 'stars'
+
+ggplot(sim.df) + geom_boxplot(aes(x = reorder(neihgborhood, stars, median), stars, fill = reorder(neihgborhood, stars, median)), show.legend=FALSE) + theme(axis.text.x = element_text(angle = 90, hjust = 1))
 ```
 
-### Import Review Dataset, it is too big so we have to import it seperately
+#### get the mean of stars mean of all neighbors
 ```{r}
-gather.review.info <- function(path) {
-  
-  max = 200000
-  current.index = 0
-  while (length(review <-read_lines(path, skip = current.index,n_max = max))) {
-    
-    review.df <- fromJSON(paste("[", paste(review, collapse = ","), "]"))
-    rating <- review.df$stars
-  }
-}
-infile1 <- "~/Documents/Project/YelpAnalysis/dataset/review.json"
-
-
-review.df
-
-# sel.TO <- rep(0, nrow(review.df))
-# for(i in 1:nrow(review.df)) sel.TO[i] <- any(review.df$business_id[i] == df_cht_kt$business_id)
-# 
-# sel.TO2 <- review.df$business_id %in% df_cht_kt$business_id
-# 
-# review.df_TO <- review.df[sel.TO>0, -6]
-# 
-# reviews_merge <- merge(review.df_TO, df_cht_kt, by.x = "business_id", by.y = "business_id")
+mean <-apply(fit$params, 2, mean)
+mean
 ```
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+#### compare all the sampling stars of each neighbor against the mean of star mean of all neighbors
+```{r}
+result <- apply(fit$params, 2, mean)
+max(fit$params[,1])
+max(fit$params[,1] - result[1])# max(fit$params[,1] - result[1])
+```
 
 
 

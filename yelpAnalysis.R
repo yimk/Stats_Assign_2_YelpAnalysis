@@ -70,5 +70,11 @@ compare_m_gibbs <- function(y, ind, maxiter = 5000)
   return(list(params = mat_store, theta = theta_mat))
 }
 
+business.df.filtered <- business.df[,c("stars", "neighborhood")]
+business.df.filtered <- business.df.filtered[!(is.na(business.df.filtered$neighborhood) | business.df.filtered$neighborhood==""), ]
+business.df.filtered
+
+tapply(business.df.filtered$stars, business.df.filtered$neighborhood, mean)
+
 fit <- compare_m_gibbs(business_df$stars, business_df$neighborhood)
 

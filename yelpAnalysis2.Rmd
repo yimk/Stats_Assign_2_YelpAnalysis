@@ -1,0 +1,156 @@
+---
+title: "Yelp Dataset Analysis - part2"
+output: html_notebook
+---
+
+### Import Libraries
+```{r}
+library("jsonlite")
+library("ggplot2")
+library("readr")
+setwd("~/Documents/Project/YelpAnalysis/")
+```
+
+### Import Business Dataset and Review Dataset
+```{r}
+# Import business dataset
+business <- stream_in(file( "dataset/business.json"))
+business.df <- flatten(business)
+business.df
+
+# Import review dataset
+review <- stream_in(file("dataset/review_Toronto.json"))
+review.df <- flatten(review)
+review.df
+
+# only keep stars, businees id and user id in the review dataset
+review.df <- review.df[,c("business_id", "user_id", "stars")]
+review.df
+```
+
+#### merge review dataset with the corresponding categories & neighborhood
+```{r}
+review.df$categories <- business.df$categories [match(review.df$business_id, business.df$business_id)]
+review.df$neighborhood <- business.df$neighborhood [match(review.df$business_id, business.df$business_id)]
+review.df
+```
+
+#### Drop null or empty rows, since we know all the columns are essential
+```{r}
+# drop null or empty neighborhood
+review.df <- review.df[!apply(is.na(review.df) | review.df == "", 1, all),]
+review.df
+```
+
+### Investigate variable correlations with MCMC regression
+
+#### Encode all the caterogries
+```{r}
+# one-hot-encode all the categories
+library(qdapTools)
+categories <- mtabulate(review.df$categories)
+categories
+```
+
+#### Encode all the neighborhoods
+```{r}
+# one-hot-encode all the neighborhoods
+neighborhood_ = factor(review.df$neighborhood) 
+neighborhood_ <- gsub(" ","_", neighborhood_)
+neighborhood = as.data.frame(model.matrix(~neighborhood_)[,-1])
+neighborhood
+```
+
+#### create a count dataframe to count the frequency of each unique category and then sum them, Keep the categories with the  top 15 frequency
+```{r}
+# drop restaurant category as all business have it
+categories <- categories[ , !(names(categories) %in% c("Restaurants"))]
+
+# create a count dataframe to count the frequency of each unique category and then sum them
+categories.sum <- data.frame(
+                 category=character(),
+                 counts=integer(),
+                 stringsAsFactors=FALSE)
+
+for (name in names(categories)) {
+  categories.sum[nrow(categories.sum) + 1,] = list(name, sum(categories[name]))
+}
+categories.sum
+
+# Keep the top 15 categories
+eliminated.categories <- categories.sum[order(categories.sum$counts, decreasing = TRUE),]
+eliminated.categories <- eliminated.categories[1:15,]
+eliminated.categories
+
+ggplot(eliminated.categories, aes(x = category, y=counts)) + geom_bar(stat="identity") + theme(axis.text.x = element_text(angle = 90, hjust = 1)) + xlab("Top 15 most frequent categories")
+
+# remove all the column that is not the top 15 category
+categories.filtered <- categories[eliminated.categories$category]
+categories.filtered
+```
+
+#### create a count dataframe to count the frequency of each unique neighborhood and then sum them, Keep the categories with the  top 15 frequency
+```{r}
+# create a count dataframe to count the frequency of each unique category and then sum them
+neighborhood.sum <- data.frame(
+                 neighborhood=character(),
+                 counts=integer(),
+                 stringsAsFactors=FALSE)
+
+for (name in names(neighborhood)) {
+  neighborhood.sum[nrow(neighborhood.sum) + 1,] = list(name, sum(neighborhood[name]))
+}
+neighborhood.sum
+
+# Keep the top 15 categories
+eliminated.neighborhood <- neighborhood.sum[order(neighborhood.sum$counts, decreasing = TRUE),]
+eliminated.neighborhood <- eliminated.neighborhood[1:15,]
+eliminated.neighborhood
+
+ggplot(eliminated.neighborhood, aes(x = neighborhood, y=counts)) + geom_bar(stat="identity") + theme(axis.text.x = element_text(angle = 90, hjust = 1)) + xlab("Top 15 most frequent neighbors")
+
+# remove all the column that is not the top 15 category
+neighborhood.filtered <- neighborhood[eliminated.neighborhood$neighborhood]
+neighborhood.filtered
+```
+
+#### merge the categories back to business dataframe, Only keep the target column, the explanatory columns(categories column) and business id and name
+```{r}
+library(dplyr)
+categories.filtered$ID <- seq.int(nrow(categories.filtered))
+review.df$ID <- seq.int(nrow(review.df))
+encoded.review.df <- left_join(review.df, categories.filtered)
+encoded.review.df <- encoded.review.df[ , !(names(encoded.review.df) %in% c("categories"))]
+encoded.review.df
+```
+
+#### merge the categories back to business dataframe, Only keep the target column, the explanatory columns(categories column) and business id and name
+```{r}
+neighborhood.filtered$ID <- seq.int(nrow(neighborhood.filtered))
+encoded.review.df <- left_join(encoded.review.df, neighborhood.filtered)
+encoded.review.df <- encoded.review.df[ , !(names(encoded.review.df) %in% c("neighborhood"))]
+encoded.review.df
+```
+
+#### Apply MCMC Linear Regression
+```{r}
+library(MCMCpack)
+lm <- lm(stars ~ . - ID - business_id - user_id, encoded.review.df)
+step_AIC <- step(lm)
+summary(step_AIC)
+install.packages("arm")
+library(arm)
+coefplot(step_AIC)
+plot(step_AIC)
+step_BIC <- step(lm, k=log(nrow(encoded.review.df)))
+step_BIC
+plot(lm)
+summary(lm)
+```
+#### Apply MCMC Linear Regression
+```{r}
+library(MCMCpack)
+lm1 <- MCMCregress(stars ~ . - ID - business_id - user_id, encoded.review.df)
+plot(lm1)
+summary(lm1)
+```
